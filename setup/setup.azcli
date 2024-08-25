@@ -1,0 +1,84 @@
+# Check if you are already logged in
+$loggedIn = az account show --query "name" -o tsv
+
+if ($loggedIn -ne $null) {
+    Write-Host "Already logged in as $loggedIn"
+} else {
+    Write-Host "Logging in..."
+    az login
+}
+# Retrieve default subscription id
+$subscriptionId = (
+    (
+        az account list -o json `
+            --query "[?isDefault]"
+    ) | ConvertFrom-Json
+).id
+
+# Set Subscription
+az account set --subscription $subscriptionId
+Write-Host "Subscription set to $subscriptionId"
+
+# Define Project Unifier
+$random = Get-Random -Minimum 100 -Maximum 999
+
+Write-Host "Unifier set to: $random"
+
+# Create Resource Group
+$resourceGroup = "AzureAI.Translation"
+$location = "swedencentral"
+
+az group create `
+    --location $location `
+    --resource-group $resourceGroup
+
+
+# Create AI Speech Service
+$speechName = "ai-speech-$random"
+$aiKind = "SpeechServices"
+$speechSKU = "S0"
+
+az cognitiveservices account create `
+    --name $speechName `
+    --resource-group $resourceGroup `
+    --kind $aiKind `
+    --sku  $speechSKU `
+    --location $location `
+    --yes
+
+$speechKey = (
+    az cognitiveservices account keys list `
+        --name $speechName `
+        --resource-group $resourceGroup `
+        --query "key1" `
+        -o tsv
+)
+
+$speechEndpoint = (
+    az cognitiveservices account show `
+        --name $speechName `
+        --resource-group $resourceGroup `
+        --query "properties.endpoint" `
+        -o tsv
+)
+
+# Store configuration 
+$configurationFile = "./config/application.env"
+New-Item -Name $configurationFile -ItemType File -Force
+
+function Set-ConfigurationFileVariable($configurationFile, $variableName, $variableValue) {
+    if (Select-String -Path $configurationFile -Pattern $variableName) {
+        (Get-Content $configurationFile) | Foreach-Object {
+            $_ -replace "$variableName = .*", "$variableName = $variableValue"
+        } | Set-Content $configurationFile
+    } else {
+        Add-Content -Path $configurationFile -value "$variableName = $variableValue"
+    }
+}
+
+Set-ConfigurationFileVariable $configurationFile "SPEECH_APIKEY" $speechKey
+Set-ConfigurationFileVariable $configurationFile "SPEECH_ENDPOINT" $speechEndpoint
+Set-ConfigurationFileVariable $configurationFile "SPEECH_REGION" $location
+
+
+Write-Host "Configuration file created at: $configurationFile"
